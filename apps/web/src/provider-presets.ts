@@ -9,6 +9,7 @@ export interface ProviderPreset {
   group: ProviderPresetGroup;
   noApiKey?: boolean;
   requiresAuthForModels?: boolean;
+  accountConnection?: boolean;
 }
 
 export const PRESET_GROUPS: Array<{ id: ProviderPresetGroup; label: string }> = [
@@ -18,6 +19,7 @@ export const PRESET_GROUPS: Array<{ id: ProviderPresetGroup; label: string }> = 
 ];
 
 export const PROVIDER_PRESETS: ProviderPreset[] = [
+  { id: "aipass", label: "AI Pass", type: PROVIDER_TYPE.aiPass, baseUrl: "https://aipass.one/oauth2/v1", group: PROVIDER_PRESET_GROUP.cloud, requiresAuthForModels: true, accountConnection: true },
   { id: "openai", label: "OpenAI", type: PROVIDER_TYPE.openaiCompat, baseUrl: "https://api.openai.com/v1", group: PROVIDER_PRESET_GROUP.cloud },
   { id: "openrouter", label: "OpenRouter", type: PROVIDER_TYPE.openaiCompat, baseUrl: "https://openrouter.ai/api/v1", group: PROVIDER_PRESET_GROUP.cloud },
   { id: "deepseek", label: "DeepSeek", type: PROVIDER_TYPE.openaiCompat, baseUrl: "https://api.deepseek.com", group: PROVIDER_PRESET_GROUP.cloud },
@@ -58,11 +60,13 @@ export const TYPE_LABELS: Record<string, string> = {
   [PROVIDER_TYPE.llamaCpp]: "llama.cpp",
   [PROVIDER_TYPE.koboldCpp]: "KoboldCPP",
   [PROVIDER_TYPE.unsloth]: "Unsloth Studio",
+  [PROVIDER_TYPE.aiPass]: "AI Pass",
 };
 
 export function getVisibleProviderPresets(isArmServer: boolean): ProviderPreset[] {
-  if (!isArmServer) return PROVIDER_PRESETS;
-  return PROVIDER_PRESETS.filter((preset) => preset.group !== PROVIDER_PRESET_GROUP.local);
+  const configurable = PROVIDER_PRESETS.filter((preset) => !preset.accountConnection);
+  if (!isArmServer) return configurable;
+  return configurable.filter((preset) => preset.group !== PROVIDER_PRESET_GROUP.local);
 }
 
 export function getVisiblePresetGroups(isArmServer: boolean): Array<{ id: ProviderPresetGroup; label: string }> {
