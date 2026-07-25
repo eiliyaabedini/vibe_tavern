@@ -18,6 +18,12 @@ function stringValue(value: unknown): string | undefined {
 		: undefined;
 }
 
+function modelId(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim()
+		? value
+		: undefined;
+}
+
 function positiveInteger(value: unknown): number | undefined {
 	return typeof value === "number" &&
 		Number.isSafeInteger(value) &&
@@ -66,13 +72,13 @@ function isChatModel(record: AiPassModelRecord): boolean {
 
 function parseRecord(value: unknown): ProviderModelOption | null {
 	if (typeof value === "string") {
-		const id = stringValue(value);
+		const id = modelId(value);
 		return id ? { id, label: id } : null;
 	}
 	if (!value || typeof value !== "object") return null;
 
 	const record = value as AiPassModelRecord;
-	const id = stringValue(record.id) ?? stringValue(record.name);
+	const id = modelId(record.id);
 	if (!id || !isChatModel(record)) return null;
 
 	const capabilities = stringSet(record.capabilities);
@@ -115,6 +121,7 @@ export function parseAiPassModels(payload: unknown): ProviderModelOption[] {
 		? payload
 		: payload &&
 			  typeof payload === "object" &&
+			  (payload as { object?: unknown }).object === "list" &&
 			  Array.isArray((payload as { data?: unknown }).data)
 			? (payload as { data: unknown[] }).data
 			: [];

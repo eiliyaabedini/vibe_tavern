@@ -50,8 +50,11 @@ plaintext file or database fallback.
    popup message. It never receives bearer tokens or the configured client ID
    through an application API.
 6. Model discovery is live and authenticated at
-   `GET https://aipass.one/oauth2/v1/models?detailed=true`. The parser accepts
-   both the OpenAI list envelope and the legacy string array. No fallback model
+   `GET https://aipass.one/oauth2/v1/models`. The parser accepts the
+   OpenAI-compatible `{ "object": "list", "data": [...] }` envelope, tolerates
+   additive record fields, and preserves each non-empty string `id` exactly.
+   Legacy top-level string and `{ id }` arrays remain accepted for migration;
+   malformed entries and name-only fallbacks are rejected. No fallback model
    IDs are embedded.
 7. Generation is pinned to
    `POST https://aipass.one/oauth2/v1/chat/completions`. The backend injects the

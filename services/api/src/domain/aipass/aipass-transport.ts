@@ -2,8 +2,7 @@ export const AIPASS_ISSUER = "https://aipass.one";
 export const AIPASS_DISCOVERY_URL =
 	"https://aipass.one/.well-known/oauth-authorization-server";
 export const AIPASS_API_BASE_URL = "https://aipass.one/oauth2/v1";
-export const AIPASS_MODELS_URL =
-	"https://aipass.one/oauth2/v1/models?detailed=true";
+export const AIPASS_MODELS_URL = "https://aipass.one/oauth2/v1/models";
 export const AIPASS_CHAT_COMPLETIONS_URL =
 	"https://aipass.one/oauth2/v1/chat/completions";
 
