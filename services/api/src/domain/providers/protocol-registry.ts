@@ -37,6 +37,7 @@ import { llamaCppProtocol } from "./llamacpp-adapter.js";
 import { unslothProtocol } from "./unsloth-adapter.js";
 import { googleProtocol } from "./google-adapter.js";
 import { anthropicProtocol } from "./anthropic-adapter.js";
+import { aiPassProtocol } from "./aipass-adapter.js";
 import type { ProtocolAdapter, ProviderCapabilityFlags } from "./protocol-types.js";
 
 // Protocol contracts (ProviderCapabilityFlags / ProtocolAdapter / etc.) live in
@@ -63,6 +64,7 @@ const protocols: Record<ProviderType, ProtocolAdapter> = {
 	[PROVIDER_TYPE.llamaCpp]: llamaCppProtocol,
 	[PROVIDER_TYPE.koboldCpp]: koboldCppProtocol,
 	[PROVIDER_TYPE.unsloth]: unslothProtocol,
+	[PROVIDER_TYPE.aiPass]: aiPassProtocol,
 };
 
 /**

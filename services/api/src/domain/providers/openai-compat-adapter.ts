@@ -30,8 +30,18 @@ import {
 import { interpretProbeResponse } from "./probe-helpers.js";
 import { PROVIDER_TYPE, SAMPLER_SETS } from "@vibe-tavern/domain";
 import type { ProtocolAdapter, ProbeInput, ListModelsInput } from "./protocol-types.js";
+import { isAiPassEndpoint } from "../aipass/aipass-transport.js";
+
+function rejectAiPassEndpoint(baseUrl: string): void {
+	if (isAiPassEndpoint(baseUrl)) {
+		throw new Error(
+			"Use Connect AI Pass instead of an API-key provider profile.",
+		);
+	}
+}
 
 export async function probeOpenAiCompatibleConnection(input: ProbeInput): Promise<ProviderProbeResult> {
+	rejectAiPassEndpoint(input.baseUrl);
 	const baseUrl = normalizeOpenAiCompatibleBaseUrl(input.baseUrl);
 	if (!baseUrl) {
 		return { success: false, error: "Provider endpoint is required." };
@@ -68,6 +78,7 @@ export async function probeOpenAiCompatibleConnection(input: ProbeInput): Promis
 }
 
 export async function testOpenAiCompatChat(input: ProviderConnectionInput): Promise<TestChatResult> {
+	rejectAiPassEndpoint(input.baseUrl);
 	const baseUrl = normalizeOpenAiCompatibleBaseUrl(input.baseUrl);
 	if (!baseUrl)
 		return { success: false, error: "Provider endpoint is required." };
@@ -128,6 +139,7 @@ export async function testOpenAiCompatChat(input: ProviderConnectionInput): Prom
 }
 
 export async function listOpenAiCompatModels(input: ListModelsInput): Promise<ProviderModelOption[]> {
+	rejectAiPassEndpoint(input.baseUrl);
 	const baseUrl = normalizeOpenAiCompatibleBaseUrl(input.baseUrl);
 
 	if (!baseUrl || !tryParseUrl(baseUrl)) {
@@ -223,6 +235,7 @@ export const openaiCompatProtocol: ProtocolAdapter = {
 		textCompletion: false,
 	},
 	resolveModel(profile, model) {
+		rejectAiPassEndpoint(profile.endpoint);
 		const endpoint = (profile.endpoint || "").replace(/\/+$/, "");
 		const apiKey = profile.apiKey ?? "";
 		// `openai_compat` is intentionally broad: in this app it covers
