@@ -97,6 +97,7 @@ export class AiPassService {
 	private readonly now: () => number;
 	private readonly launches = new Map<string, PendingLaunch>();
 	private readonly transactions = new Map<string, PendingTransaction>();
+	private lifecycleTail: Promise<void> = Promise.resolve();
 
 	constructor(options: AiPassServiceOptions) {
 		this.config = options.config;
@@ -209,51 +210,66 @@ export class AiPassService {
 			throw new Error("AI Pass authorization code was missing.");
 		}
 
-		const metadata = await this.discovery.get();
-		const previous = await this.credentials.read();
-		const tokens = await this.exchangeCode(
-			metadata,
-			config.clientId,
-			config.redirectUri,
-			input.code,
-			transaction.codeVerifier,
-		);
-		let stored = false;
-		try {
-			await this.validateUserinfo(metadata, tokens.accessToken);
-			const models = await this.fetchModels(tokens.accessToken);
-			await this.credentials.write(tokens);
-			stored = true;
-			await this.ensureProfile(models);
-		} catch (error) {
-			await this.revokeTokens(metadata, tokens).catch(() => {});
-			if (stored) {
-				if (previous) await this.credentials.write(previous);
-				else await this.credentials.clear();
+		await this.runLifecycle(async () => {
+			const metadata = await this.discovery.get();
+			const previous = await this.credentials.read();
+			const tokens = await this.exchangeCode(
+				metadata,
+				config.clientId,
+				config.redirectUri,
+				input.code,
+				transaction.codeVerifier,
+			);
+			let stored = false;
+			try {
+				await this.validateUserinfo(metadata, tokens.accessToken);
+				const models = await this.fetchModels(tokens.accessToken);
+				await this.credentials.write(tokens);
+				stored = true;
+				await this.ensureProfile(models);
+			} catch (error) {
+				await this.revokeTokens(metadata, tokens).catch(() => {});
+				if (stored) {
+					if (previous) await this.credentials.write(previous);
+					else await this.credentials.clear();
+				}
+				throw error;
 			}
-			throw error;
-		}
+		});
 	}
 
 	async disconnect(): Promise<{ revoked: boolean }> {
-		const tokens = await this.credentials.takeAndClear();
-		let revoked = tokens === null;
-		if (tokens) {
-			try {
-				const metadata = await this.discovery.get();
-				await this.revokeTokens(metadata, tokens);
-				revoked = true;
-			} catch {
-				revoked = false;
+		this.launches.clear();
+		this.transactions.clear();
+		return this.runLifecycle(async () => {
+			const tokens = await this.credentials.takeAndClear();
+			let revoked = tokens === null;
+			if (tokens) {
+				try {
+					const metadata = await this.discovery.get();
+					await this.revokeTokens(metadata, tokens);
+					revoked = true;
+				} catch {
+					revoked = false;
+				}
 			}
-		}
-		const profiles = await this.profiles.listProviderProfiles();
-		for (const profile of profiles) {
-			if (profile.providerPreset === AI_PASS_PRESET) {
-				await this.profiles.deleteProviderProfile(profile.id);
+			const profiles = await this.profiles.listProviderProfiles();
+			for (const profile of profiles) {
+				if (profile.providerPreset === AI_PASS_PRESET) {
+					await this.profiles.deleteProviderProfile(profile.id);
+				}
 			}
-		}
-		return { revoked };
+			return { revoked };
+		});
+	}
+
+	private runLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+		const result = this.lifecycleTail.then(operation);
+		this.lifecycleTail = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
 	}
 
 	private requireConfiguration(): {
@@ -288,8 +304,9 @@ export class AiPassService {
 
 	private async requestTokens(
 		metadata: AiPassAuthorizationServerMetadata,
-		body: URLSearchParams,
+		body: Record<string, string>,
 		signal?: AbortSignal,
+		requireRefreshToken = false,
 	): Promise<AiPassTokenSet> {
 		const { payload } = await fetchAiPassBoundedJson(
 			metadata.tokenEndpoint,
@@ -303,10 +320,12 @@ export class AiPassService {
 					method: "POST",
 					headers: {
 						Accept: "application/json",
-						"Content-Type":
-							"application/x-www-form-urlencoded",
+						"Content-Type": "application/json",
 					},
-					body,
+					// AI Pass's first-party public-client protocol currently
+					// accepts JSON camelCase token requests. Endpoints still
+					// come exclusively from validated discovery metadata.
+					body: JSON.stringify(body),
 				},
 			},
 		);
@@ -315,49 +334,70 @@ export class AiPassService {
 		}
 		const record = payload as Record<string, unknown>;
 		const accessToken = requireString(record, "access_token");
-		const tokenType =
-			typeof record.token_type === "string"
-				? record.token_type.toLowerCase()
-				: "bearer";
-		if (tokenType !== "bearer") {
-			throw new Error("AI Pass returned an unsupported token type.");
-		}
-		const expiresIn =
-			typeof record.expires_in === "string" &&
-			/^\d+$/.test(record.expires_in)
-				? Number(record.expires_in)
-				: record.expires_in;
-		if (
-			typeof expiresIn !== "number" ||
-			!Number.isFinite(expiresIn) ||
-			expiresIn <= 0 ||
-			expiresIn > 31 * 24 * 60 * 60
-		) {
-			throw new Error("AI Pass token expiry was invalid.");
-		}
-		const scope =
-			typeof record.scope === "string" ? record.scope : undefined;
-		if (scope) {
-			const scopes = new Set(scope.split(/\s+/).filter(Boolean));
-			if (
-				!scopes.has("profile:read") ||
-				!scopes.has("api:access")
-			) {
-				throw new Error("AI Pass did not grant the required scopes.");
-			}
-		}
-		return {
-			accessToken,
-			...(typeof record.refresh_token === "string" &&
+		const refreshToken =
+			typeof record.refresh_token === "string" &&
 			record.refresh_token
-				? { refreshToken: record.refresh_token }
-				: {}),
-			expiresAt: this.now() + expiresIn * 1_000,
-			...(scope ? { scope } : {}),
+				? record.refresh_token
+				: undefined;
+		const provisionalTokens: AiPassTokenSet = {
+			accessToken,
+			...(refreshToken ? { refreshToken } : {}),
+			expiresAt: this.now(),
 		};
+		try {
+			const tokenType =
+				typeof record.token_type === "string"
+					? record.token_type.toLowerCase()
+					: "";
+			if (tokenType !== "bearer") {
+				throw new Error(
+					"AI Pass token type was missing or unsupported.",
+				);
+			}
+			const expiresIn =
+				typeof record.expires_in === "string" &&
+				/^\d+$/.test(record.expires_in)
+					? Number(record.expires_in)
+					: record.expires_in;
+			if (
+				typeof expiresIn !== "number" ||
+				!Number.isFinite(expiresIn) ||
+				expiresIn <= 0 ||
+				expiresIn > 31 * 24 * 60 * 60
+			) {
+				throw new Error("AI Pass token expiry was invalid.");
+			}
+			const scope =
+				typeof record.scope === "string" ? record.scope : undefined;
+			if (scope) {
+				const scopes = new Set(scope.split(/\s+/).filter(Boolean));
+				if (
+					!scopes.has("profile:read") ||
+					!scopes.has("api:access")
+				) {
+					throw new Error(
+						"AI Pass did not grant the required scopes.",
+					);
+				}
+			}
+			if (requireRefreshToken && !refreshToken) {
+				throw new Error(
+					"AI Pass token response was missing a refresh token.",
+				);
+			}
+			return {
+				accessToken,
+				...(refreshToken ? { refreshToken } : {}),
+				expiresAt: this.now() + expiresIn * 1_000,
+				...(scope ? { scope } : {}),
+			};
+		} catch (error) {
+			await this.revokeTokens(metadata, provisionalTokens).catch(() => {});
+			throw error;
+		}
 	}
 
-	private exchangeCode(
+	private async exchangeCode(
 		metadata: AiPassAuthorizationServerMetadata,
 		clientId: string,
 		redirectUri: string,
@@ -366,13 +406,15 @@ export class AiPassService {
 	): Promise<AiPassTokenSet> {
 		return this.requestTokens(
 			metadata,
-			new URLSearchParams({
-				grant_type: "authorization_code",
-				client_id: clientId,
-				redirect_uri: redirectUri,
+			{
+				grantType: "authorization_code",
+				clientId,
+				redirectUri,
 				code,
-				code_verifier: codeVerifier,
-			}),
+				codeVerifier,
+			},
+			undefined,
+			true,
 		);
 	}
 
@@ -384,11 +426,11 @@ export class AiPassService {
 		const metadata = await this.discovery.get(signal);
 		return this.requestTokens(
 			metadata,
-			new URLSearchParams({
-				grant_type: "refresh_token",
-				client_id: config.clientId,
-				refresh_token: refreshToken,
-			}),
+			{
+				grantType: "refresh_token",
+				clientId: config.clientId,
+				refreshToken,
+			},
 			signal,
 		);
 	}
@@ -466,45 +508,60 @@ export class AiPassService {
 				? existing.visionModel
 				: visionModels[0]?.id ?? null;
 
-		const profile = existing
-			? await this.profiles.updateProviderProfile(existing.id, {
-					endpoint: AIPASS_API_BASE_URL,
-					providerPreset: AI_PASS_PRESET,
-					apiKey: null,
-					defaultModel,
-					visionModel,
-				})
-			: await this.profiles.saveProviderProfile({
-					name: "AI Pass",
-					providerPreset: AI_PASS_PRESET,
-					endpoint: AIPASS_API_BASE_URL,
-					apiKey: null,
-					defaultModel,
-					visionModel,
-					streamResponse: true,
-				});
+		let createdProfileId: string | null = null;
+		try {
+			const profile = existing
+				? await this.profiles.updateProviderProfile(existing.id, {
+						endpoint: AIPASS_API_BASE_URL,
+						providerPreset: AI_PASS_PRESET,
+						apiKey: null,
+						defaultModel,
+						visionModel,
+					})
+				: await this.profiles.saveProviderProfile({
+						name: "AI Pass",
+						providerPreset: AI_PASS_PRESET,
+						endpoint: AIPASS_API_BASE_URL,
+						apiKey: null,
+						defaultModel,
+						visionModel,
+						streamResponse: true,
+					});
+			if (!existing) createdProfileId = profile.id;
 
-		await this.profiles.setCachedProviderModels(
-			profile.id,
-			models.map((model) => ({
-				id: model.id,
-				label: model.label,
-				...(model.contextLength !== undefined
-					? { contextLength: model.contextLength }
-					: {}),
-				...(model.capabilities
-					? {
-						capabilities: {
-							thinking: model.capabilities.reasoning,
-							tools: model.capabilities.tools,
-							vision: model.capabilities.vision,
-						},
-					}
-					: {}),
-			})),
-		);
-		if (!(await this.profiles.resolveActiveProviderProfile())) {
-			await this.profiles.activateProviderProfile(profile.id);
+			await this.profiles.setCachedProviderModels(
+				profile.id,
+				models.map((model) => ({
+					id: model.id,
+					label: model.label,
+					...(model.contextLength !== undefined
+						? { contextLength: model.contextLength }
+						: {}),
+					...(model.capabilities
+						? {
+							capabilities: {
+								thinking: model.capabilities.reasoning,
+								tools: model.capabilities.tools,
+								vision: model.capabilities.vision,
+							},
+						}
+						: {}),
+				})),
+			);
+			if (!(await this.profiles.resolveActiveProviderProfile())) {
+				await this.profiles.activateProviderProfile(profile.id);
+			}
+		} catch (error) {
+			if (createdProfileId) {
+				try {
+					await this.profiles.deleteProviderProfile(createdProfileId);
+				} catch {
+					throw new Error(
+						"AI Pass profile setup failed and rollback could not remove the incomplete profile.",
+					);
+				}
+			}
+			throw error;
 		}
 	}
 

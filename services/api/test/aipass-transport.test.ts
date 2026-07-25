@@ -26,6 +26,36 @@ describe("AI Pass wallet-billed transport", () => {
 		expect(upstreamSignal?.aborted).toBe(true);
 	});
 
+	test("actively cancels the upstream response body after caller cancellation", async () => {
+		let upstreamCancelled = false;
+		const upstreamBody = new ReadableStream<Uint8Array>({
+			pull() {
+				return new Promise<void>(() => {});
+			},
+			cancel() {
+				upstreamCancelled = true;
+			},
+		});
+		const transport = createAiPassChatFetch({
+			fetchImpl: async () => new Response(upstreamBody, {
+				headers: { "Content-Type": "text/event-stream" },
+			}),
+		});
+		const controller = new AbortController();
+		const response = await transport(AIPASS_CHAT_COMPLETIONS_URL, {
+			method: "POST",
+			body: "{}",
+			signal: controller.signal,
+		});
+		const readPromise = response.body!.getReader().read();
+
+		controller.abort();
+		await Promise.resolve();
+
+		expect(upstreamCancelled).toBe(true);
+		await readPromise.catch(() => {});
+	});
+
 	test("fails closed for any endpoint other than AI Pass chat completions", async () => {
 		let called = false;
 		const transport = createAiPassChatFetch({

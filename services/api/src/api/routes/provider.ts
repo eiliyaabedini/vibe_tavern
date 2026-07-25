@@ -22,7 +22,7 @@ export function createProviderRoutes(runtime: ProviderRuntimeApi) {
       return c.json(await runtime.fetchProviderProfile(c.req.param("providerId")));
     })
     .delete("/api/providers/:providerId", async (c) => {
-      runtime.deleteProviderProfile(c.req.param("providerId"));
+      await runtime.deleteProviderProfile(c.req.param("providerId"));
       return c.json({ ok: true });
     })
     .patch("/api/providers/:providerId", zValidator("json", schemas.updateProviderProfileSchema), async (c) => {

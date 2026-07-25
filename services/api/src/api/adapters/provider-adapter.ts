@@ -51,7 +51,9 @@ export class ProviderAdapter implements ProviderRuntimeApi {
 			body.providerPreset,
 			body.endpoint,
 		);
-		const profile = await this.getRequiredProviderProfile(providerProfileId);
+		const profile = await this.getRequiredClientProviderProfile(
+			providerProfileId,
+		);
 		if (profile.providerPreset === AI_PASS_PRESET) {
 			for (const field of ["apiKey", "endpoint", "providerPreset", "name"]) {
 				if (Object.prototype.hasOwnProperty.call(body, field)) {
@@ -89,7 +91,9 @@ export class ProviderAdapter implements ProviderRuntimeApi {
 	};
 
 	deleteProviderProfile = async (providerProfileId: string) => {
-		const profile = await this.getRequiredProviderProfile(providerProfileId);
+		const profile = await this.getRequiredClientProviderProfile(
+			providerProfileId,
+		);
 		if (profile.providerPreset === AI_PASS_PRESET) {
 			throw providerError(
 				"Use Disconnect AI Pass to revoke and remove this connection.",
@@ -181,6 +185,20 @@ export class ProviderAdapter implements ProviderRuntimeApi {
 		const profile = await this.providerProfileService.getProviderProfile(providerProfileId);
 		if (!profile) {
 			throw notFound("ProviderProfile", `Provider profile '${providerProfileId}' was not found.`);
+		}
+		return profile;
+	}
+
+	private async getRequiredClientProviderProfile(providerProfileId: string) {
+		const profile =
+			await this.providerProfileService.getProviderProfileForClient(
+				providerProfileId,
+			);
+		if (!profile) {
+			throw notFound(
+				"ProviderProfile",
+				`Provider profile '${providerProfileId}' was not found.`,
+			);
 		}
 		return profile;
 	}

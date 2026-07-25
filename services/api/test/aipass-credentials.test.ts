@@ -79,7 +79,7 @@ describe("AI Pass credential refresh", () => {
 		);
 	});
 
-	test("disconnect invalidates an in-flight refresh before clearing storage", async () => {
+	test("disconnect captures an in-flight rotation before clearing storage", async () => {
 		const store = new MemoryAiPassTokenStore();
 		await store.write({
 			accessToken: "expired",
@@ -110,8 +110,105 @@ describe("AI Pass credential refresh", () => {
 
 		await expect(accessPromise).rejects.toThrow("connection changed");
 		expect(await disconnectPromise).toMatchObject({
-			accessToken: "expired",
+			accessToken: "rotated",
+			refreshToken: "rotated-refresh",
 		});
 		expect(await store.read()).toBeNull();
+	});
+
+	test("rejects credential reads that start while disconnect is clearing storage", async () => {
+		let tokens: AiPassTokenSet | null = {
+			accessToken: "still-valid",
+			refreshToken: "refresh",
+			expiresAt: 3_600_000,
+		};
+		let releaseClear: (() => void) | undefined;
+		const clearGate = new Promise<void>((resolve) => {
+			releaseClear = resolve;
+		});
+		const store = {
+			kind: "test",
+			read: async () => tokens,
+			write: async (next: AiPassTokenSet) => {
+				tokens = next;
+			},
+			clear: async () => {
+				await clearGate;
+				tokens = null;
+			},
+		};
+		const manager = new AiPassCredentialManager({
+			store,
+			now: () => 0,
+			refresh: async () => {
+				throw new Error("refresh must not run");
+			},
+		});
+
+		const disconnectPromise = manager.takeAndClear();
+		try {
+			await expect(manager.getAccessToken()).rejects.toThrow(
+				"connection changed",
+			);
+		} finally {
+			releaseClear?.();
+			await disconnectPromise;
+		}
+		expect(await store.read()).toBeNull();
+	});
+
+	test("rejects a rotated token when disconnect begins during secure persistence", async () => {
+		let tokens: AiPassTokenSet | null = {
+			accessToken: "expired",
+			refreshToken: "refresh",
+			expiresAt: 1,
+		};
+		let signalWriteStarted: (() => void) | undefined;
+		const writeStarted = new Promise<void>((resolve) => {
+			signalWriteStarted = resolve;
+		});
+		let releaseWrite: (() => void) | undefined;
+		const writeGate = new Promise<void>((resolve) => {
+			releaseWrite = resolve;
+		});
+		const store = {
+			kind: "test",
+			read: async () => tokens,
+			write: async (next: AiPassTokenSet) => {
+				signalWriteStarted?.();
+				await writeGate;
+				tokens = next;
+			},
+			clear: async () => {
+				tokens = null;
+			},
+		};
+		const manager = new AiPassCredentialManager({
+			store,
+			now: () => 100_000,
+			refresh: async () => ({
+				accessToken: "rotated",
+				refreshToken: "rotated-refresh",
+				expiresAt: 3_700_000,
+			}),
+		});
+
+		const accessPromise = manager.getAccessToken();
+		await writeStarted;
+		const disconnectPromise = manager.takeAndClear();
+		releaseWrite?.();
+
+		await expect(accessPromise).rejects.toThrow("connection changed");
+		await disconnectPromise;
+		expect(await store.read()).toBeNull();
+	});
+
+	test("rejects credential values that exceed the native-store bound", async () => {
+		const store = new MemoryAiPassTokenStore();
+		await expect(store.write({
+			accessToken: "a".repeat(70 * 1024),
+			refreshToken: "refresh",
+			expiresAt: 3_600_000,
+		})).rejects.toThrow("size limit");
 	});
 });

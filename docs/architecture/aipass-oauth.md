@@ -39,10 +39,13 @@ plaintext file or database fallback.
    after a server restart.
 3. The callback validates and consumes both the transaction and state before
    exchanging the authorization code. Token, userinfo, and revocation endpoints
-   come from the validated authorization-server metadata.
+   come from the validated authorization-server metadata. Token exchange and
+   refresh use AI Pass's current first-party JSON/camelCase public-client
+   payload; revocation uses the endpoint's form-encoded request shape.
 4. Access and refresh tokens are written atomically as one credential-store
-   value. Refreshes are serialized, and disconnect invalidates in-flight
-   refreshes before clearing storage.
+   value. Refreshes are serialized. OAuth completion and disconnect are also
+   serialized, and disconnect invalidates pending authorization attempts plus
+   in-flight refreshes before clearing storage.
 5. The browser receives only redacted connection status and a success/failure
    popup message. It never receives bearer tokens or the configured client ID
    through an application API.

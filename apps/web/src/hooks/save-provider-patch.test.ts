@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { buildFavoriteModelSwitchPatch, computeOverlayPatch, computeSavePatch } from "./save-provider-patch.js";
+import {
+  buildFavoriteModelSwitchPatch,
+  computeAiPassSavePatch,
+  computeOverlayPatch,
+  computeSavePatch,
+} from "./save-provider-patch.js";
 import type { FormState } from "../components/modals/ProviderModal.js";
 
 /** Minimal FormState factory — override only what matters for the test.
@@ -116,6 +121,28 @@ describe("computeSavePatch", () => {
     const form = makeForm({ pinContextBudget: true });
     const patch = computeSavePatch(form);
     expect(patch.pinContextBudget).toBe(true);
+  });
+});
+
+describe("computeAiPassSavePatch", () => {
+  test("keeps generation settings but excludes OAuth account identity fields", () => {
+    const patch = computeAiPassSavePatch(makeForm({
+      providerPreset: "aipass",
+      name: "AI Pass",
+      baseUrl: "https://aipass.one/oauth2/v1",
+      apiKey: "",
+      model: "live-model",
+      temperature: 0.3,
+    }));
+
+    expect(patch).toMatchObject({
+      defaultModel: "live-model",
+      temperature: 0.3,
+    });
+    expect(patch).not.toHaveProperty("name");
+    expect(patch).not.toHaveProperty("providerPreset");
+    expect(patch).not.toHaveProperty("endpoint");
+    expect(patch).not.toHaveProperty("apiKey");
   });
 });
 

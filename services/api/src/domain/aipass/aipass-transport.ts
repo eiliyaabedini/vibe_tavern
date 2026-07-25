@@ -36,7 +36,13 @@ interface BoundedJsonOptions {
 export function isAiPassEndpoint(value: unknown): boolean {
 	if (typeof value !== "string" || !value.trim()) return false;
 	try {
-		return new URL(value).origin === AIPASS_ISSUER;
+		const url = new URL(value);
+		return (
+			url.protocol === "https:" &&
+			url.hostname.toLowerCase().replace(/\.+$/g, "") ===
+				"aipass.one" &&
+			(url.port === "" || url.port === "443")
+		);
 	} catch {
 		return false;
 	}
@@ -120,7 +126,7 @@ function boundedStreamingResponse(
 	const contentLength = Number(response.headers.get("content-length") ?? "0");
 	if (Number.isFinite(contentLength) && contentLength > maxBytes) {
 		signal.abort(new Error("AI Pass response exceeded its size limit."));
-		void response.body?.cancel();
+		void response.body?.cancel().catch(() => {});
 		signal.cancelTimeout();
 		throw new Error("AI Pass response exceeded its size limit.");
 	}
@@ -131,12 +137,25 @@ function boundedStreamingResponse(
 
 	const reader = response.body.getReader();
 	let total = 0;
+	let settled = false;
+	const cleanup = () => {
+		if (settled) return;
+		settled = true;
+		signal.signal.removeEventListener("abort", onAbort);
+		signal.cancelTimeout();
+	};
+	const onAbort = () => {
+		void reader.cancel(signal.signal.reason).catch(() => {});
+		cleanup();
+	};
+	signal.signal.addEventListener("abort", onAbort, { once: true });
+	if (signal.signal.aborted) onAbort();
 	const body = new ReadableStream<Uint8Array>({
 		async pull(controller) {
 			try {
 				const { done, value } = await reader.read();
 				if (done) {
-					signal.cancelTimeout();
+					cleanup();
 					controller.close();
 					return;
 				}
@@ -147,20 +166,20 @@ function boundedStreamingResponse(
 					);
 					signal.abort(error);
 					await reader.cancel(error);
-					signal.cancelTimeout();
+					cleanup();
 					controller.error(error);
 					return;
 				}
 				controller.enqueue(value);
 			} catch (error) {
-				signal.cancelTimeout();
+				cleanup();
 				controller.error(error);
 			}
 		},
 		async cancel(reason) {
 			signal.abort(reason);
-			signal.cancelTimeout();
-			await reader.cancel(reason);
+			cleanup();
+			await reader.cancel(reason).catch(() => {});
 		},
 	});
 

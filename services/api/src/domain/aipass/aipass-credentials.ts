@@ -43,7 +43,7 @@ function validateTokens(value: unknown): AiPassTokenSet {
 	) {
 		throw new Error("AI Pass secure storage contained invalid credentials.");
 	}
-	return {
+	const tokens: AiPassTokenSet = {
 		accessToken: record.accessToken,
 		...(typeof record.refreshToken === "string" && record.refreshToken
 			? { refreshToken: record.refreshToken }
@@ -51,6 +51,10 @@ function validateTokens(value: unknown): AiPassTokenSet {
 		expiresAt: record.expiresAt,
 		...(typeof record.scope === "string" ? { scope: record.scope } : {}),
 	};
+	if (Buffer.byteLength(JSON.stringify(tokens)) > MAX_SECRET_BYTES) {
+		throw new Error("AI Pass secure storage value exceeded its size limit.");
+	}
+	return tokens;
 }
 
 function decodeStoredTokens(raw: string): AiPassTokenSet {
@@ -90,6 +94,7 @@ export class AiPassCredentialManager {
 	private readonly now: () => number;
 	private refreshInFlight: Promise<string> | null = null;
 	private revision = 0;
+	private changesInFlight = 0;
 
 	constructor(options: AiPassCredentialManagerOptions) {
 		this.store = options.store;
@@ -107,28 +112,49 @@ export class AiPassCredentialManager {
 
 	async write(tokens: AiPassTokenSet): Promise<void> {
 		this.revision += 1;
-		await this.refreshInFlight?.catch(() => {});
-		await this.store.write(validateTokens(tokens));
+		this.changesInFlight += 1;
+		try {
+			await this.refreshInFlight?.catch(() => {});
+			await this.store.write(validateTokens(tokens));
+		} finally {
+			this.changesInFlight -= 1;
+		}
 	}
 
 	async clear(): Promise<void> {
 		this.revision += 1;
-		await this.refreshInFlight?.catch(() => {});
-		await this.store.clear();
+		this.changesInFlight += 1;
+		try {
+			await this.refreshInFlight?.catch(() => {});
+			await this.store.clear();
+		} finally {
+			this.changesInFlight -= 1;
+		}
 	}
 
 	async takeAndClear(): Promise<AiPassTokenSet | null> {
 		this.revision += 1;
-		await this.refreshInFlight?.catch(() => {});
-		const tokens = await this.store.read();
-		await this.store.clear();
-		return tokens;
+		this.changesInFlight += 1;
+		try {
+			await this.refreshInFlight?.catch(() => {});
+			const tokens = await this.store.read();
+			await this.store.clear();
+			return tokens;
+		} finally {
+			this.changesInFlight -= 1;
+		}
 	}
 
 	async getAccessToken(signal?: AbortSignal): Promise<string> {
+		if (this.changesInFlight > 0) {
+			throw new Error("AI Pass connection changed during credential access.");
+		}
 		const revision = this.revision;
 		const tokens = await this.store.read();
-		if (revision !== this.revision) {
+		if (
+			revision !== this.revision ||
+			this.changesInFlight > 0
+		) {
 			throw new Error("AI Pass connection changed during credential access.");
 		}
 		if (!tokens) throw new Error("AI Pass is not connected.");
@@ -156,14 +182,16 @@ export class AiPassCredentialManager {
 		signal?: AbortSignal,
 	): Promise<string> {
 		const refreshed = await this.refresh(current.refreshToken!, signal);
-		if (revision !== this.revision) {
-			throw new Error("AI Pass connection changed during token refresh.");
-		}
 		const rotated: AiPassTokenSet = {
 			...refreshed,
 			refreshToken: refreshed.refreshToken ?? current.refreshToken,
 		};
+		// Persist before the revision check so a waiting disconnect can retrieve
+		// and revoke credentials that the authorization server already rotated.
 		await this.store.write(rotated);
+		if (revision !== this.revision) {
+			throw new Error("AI Pass connection changed during token refresh.");
+		}
 		return rotated.accessToken;
 	}
 }
