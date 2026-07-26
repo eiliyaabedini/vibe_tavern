@@ -1,3 +1,5 @@
+// Deployment supplies a maintainer-owned public OAuth client ID and its exact
+// registered callback. No upstream deployment client is embedded.
 export const AIPASS_CLIENT_ID_ENV = "VIBE_TAVERN_AIPASS_CLIENT_ID";
 export const AIPASS_REDIRECT_URI_ENV =
 	"VIBE_TAVERN_AIPASS_REDIRECT_URI";

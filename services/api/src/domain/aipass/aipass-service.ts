@@ -322,9 +322,9 @@ export class AiPassService {
 						Accept: "application/json",
 						"Content-Type": "application/json",
 					},
-					// AI Pass's first-party public-client protocol currently
-					// accepts JSON camelCase token requests. Endpoints still
-					// come exclusively from validated discovery metadata.
+					// AI Pass's public-client token endpoint currently accepts
+					// JSON camelCase requests. Endpoints still come exclusively
+					// from validated discovery metadata.
 					body: JSON.stringify(body),
 				},
 			},
