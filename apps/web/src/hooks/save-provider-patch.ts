@@ -122,6 +122,28 @@ export function computeSavePatch(form: FormState): ProviderSavePatch {
   return patch;
 }
 
+export type AiPassSavePatch = Omit<
+  ProviderSavePatch,
+  "name" | "providerPreset" | "endpoint" | "apiKey"
+>;
+
+/**
+ * AI Pass account identity is owned exclusively by the OAuth lifecycle.
+ * Provider Settings may still persist model, sampler, and context choices,
+ * but must never send account identity or credential-shaped fields through
+ * the generic provider PATCH route.
+ */
+export function computeAiPassSavePatch(form: FormState): AiPassSavePatch {
+  const {
+    name: _name,
+    providerPreset: _providerPreset,
+    endpoint: _endpoint,
+    apiKey: _apiKey,
+    ...generationSettings
+  } = computeSavePatch(form);
+  return generationSettings;
+}
+
 /**
  * Validate a save patch by checking required fields.
  * Returns null if valid, or an error message string.

@@ -1,4 +1,4 @@
-import type { RuntimeApi } from "../contract/runtime-api.js";
+import type { AiPassRuntimeApi, RuntimeApi } from "../contract/runtime-api.js";
 import type { StoreContainer } from "@vibe-tavern/db";
 import type { SessionRuntime } from "../../runtime/session/session-runtime.js";
 import type { ProviderProfileService } from "../../domain/providers/provider-profile-service.js";
@@ -45,6 +45,7 @@ export class RuntimeApiAdapter implements RuntimeApi {
 	readonly lorebook: LorebookAdapter;
 	readonly script: ScriptAdapter;
 	readonly provider: ProviderAdapter;
+	readonly aipass: AiPassRuntimeApi;
 	readonly preset: PresetAdapter;
 	readonly importExport: ImportExportAdapter;
 	readonly asset: AssetAdapter;
@@ -68,6 +69,7 @@ export class RuntimeApiAdapter implements RuntimeApi {
 		trackerService: SceneTrackerService,
 		skillLibraryService: SkillLibraryService,
 		diceService: DiceService,
+		aiPassService?: AiPassRuntimeApi,
 	) {
 		const bootstrapAdapter = new BootstrapAdapter(sessionRuntime);
 		this.bootstrap = bootstrapAdapter.bootstrap;
@@ -80,6 +82,7 @@ export class RuntimeApiAdapter implements RuntimeApi {
 		this.lorebook = new LorebookAdapter(stores);
 		this.script = new ScriptAdapter(stores);
 		this.provider = new ProviderAdapter(stores, providerProfileService);
+		this.aipass = aiPassService ?? unavailableAiPassRuntime;
 		this.preset = new PresetAdapter(promptPresetService);
 		this.importExport = new ImportExportAdapter(sessionRuntime);
 		this.asset = new AssetAdapter(assetService);
@@ -91,3 +94,25 @@ export class RuntimeApiAdapter implements RuntimeApi {
 		this.dice = new DiceAdapter(diceService);
 	}
 }
+
+const unavailableAiPassRuntime: AiPassRuntimeApi = {
+	appOrigin: null,
+	getStatus: async () => ({
+		available: false,
+		connected: false,
+		profileId: null,
+		storage: "unavailable",
+		prerequisite:
+			"Protected AI Pass client configuration and a registered HTTPS callback are required.",
+	}),
+	createAuthorizationLaunch: async () => {
+		throw new Error("AI Pass OAuth is not configured.");
+	},
+	beginAuthorization: async () => {
+		throw new Error("AI Pass OAuth is not configured.");
+	},
+	completeAuthorization: async () => {
+		throw new Error("AI Pass OAuth is not configured.");
+	},
+	disconnect: async () => ({ revoked: false }),
+};

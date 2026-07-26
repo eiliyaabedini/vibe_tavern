@@ -96,6 +96,7 @@ export function buildSamplerConfig(
   switch (providerType) {
     // -- OpenAI-compatible providers + local native Ollama/llamacpp --------
     case PROVIDER_TYPE.openaiCompat:
+    case PROVIDER_TYPE.aiPass:
     case PROVIDER_TYPE.ollama:
     case PROVIDER_TYPE.llamaCpp:
     case PROVIDER_TYPE.unsloth: {
@@ -111,6 +112,7 @@ export function buildSamplerConfig(
 
       // providerOptions.<providerName> namespace — must match createOpenAICompatible({ name })
       const providerOptionsKey = providerType === PROVIDER_TYPE.openaiCompat ? "openai_compat"
+        : providerType === PROVIDER_TYPE.aiPass ? "aipass"
         : providerType === PROVIDER_TYPE.ollama ? "ollama"
         : providerType === PROVIDER_TYPE.unsloth ? "unsloth"
         : "llamacpp";

@@ -16,6 +16,10 @@ import { resolveTlsConfig } from "../domain/mobile-access/mobile-auth.js";
 import { PromptPresetService } from "../domain/prompt/prompt-preset-service.js";
 import { ProviderOrchestrator } from "../domain/providers/provider-orchestrator.js";
 import { createProviderProfileService } from "../domain/providers/provider-profile-service.js";
+import { createAiPassProviderProfileService } from "../domain/aipass/aipass-provider-profile-service.js";
+import { resolveAiPassConfig } from "../domain/aipass/aipass-config.js";
+import { createNativeAiPassTokenStore } from "../domain/aipass/aipass-credentials.js";
+import { AiPassService } from "../domain/aipass/aipass-service.js";
 import { RuntimeApiAdapter } from "../api/adapters/runtime-api-adapter.js";
 import { SessionRuntime } from "../runtime/session/session-runtime.js";
 import { createAiAssistantFeature } from "../domain/ai-assistant/ai-assistant-feature.js";
@@ -167,7 +171,17 @@ export async function startServerRuntime(config: ServerRuntimeConfig): Promise<v
 		console.log(`${tag} Tokenizers ready.`);
 
 		// Services
-		const providerProfileService = createProviderProfileService(stores.providers);
+		const baseProviderProfileService = createProviderProfileService(stores.providers);
+		const aiPassTokenStore = await createNativeAiPassTokenStore(config.dataDir);
+		const aiPassService = new AiPassService({
+			config: resolveAiPassConfig(),
+			store: aiPassTokenStore,
+			profiles: baseProviderProfileService,
+		});
+		const providerProfileService = createAiPassProviderProfileService(
+			baseProviderProfileService,
+			aiPassService.credentials,
+		);
 		const promptPresetService = new PromptPresetService(stores.presets, stores.chats);
 		// Skill library is constructed before SessionRuntime so the catalog can be
 		// injected (CTX-S4): the co-author prompt shows a metadata-only catalog
@@ -227,6 +241,7 @@ export async function startServerRuntime(config: ServerRuntimeConfig): Promise<v
 			trackerService,
 			skillLibraryService,
 			diceService,
+			aiPassService,
 		);
 
 		features.register(createAiAssistantFeature(runtime.aiAssistant));

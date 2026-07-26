@@ -11,6 +11,7 @@ import { useReorderableList } from '../../../hooks/use-reorderable-list.js';
 import { DndContext, DragOverlay, closestCenter } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import type { AiPassStatusResponse } from '../../../api/aipass-api.js';
 
 interface ProviderProfileListProps {
   /** Full (unfiltered) list — the hook's source of truth for reorder. */
@@ -26,6 +27,10 @@ interface ProviderProfileListProps {
   onAddProfile?: () => void;
   onReorder?: (updates: Array<{ id: string; sortOrder: number }>) => void | Promise<unknown>;
   selectionOnly?: boolean;
+  aiPassStatus?: AiPassStatusResponse | null;
+  aiPassBusy?: boolean;
+  aiPassError?: string | null;
+  onAiPassAction?: () => void;
 }
 
 // A single profile row with a dedicated ≡ drag handle (same pattern as
@@ -126,6 +131,10 @@ export function ProviderProfileList({
   onAddProfile,
   onReorder,
   selectionOnly = false,
+  aiPassStatus,
+  aiPassBusy = false,
+  aiPassError,
+  onAiPassAction,
 }: ProviderProfileListProps) {
   const { t } = useT();
   const isMobile = useIsMobile();
@@ -182,6 +191,39 @@ export function ProviderProfileList({
       <div className="mb-1.5 px-4 font-ui text-[12px] font-medium uppercase tracking-[0.05em] text-t3">
         {t('profiles_label')}
       </div>
+
+      {!selectionOnly && (
+        <div className="mx-3 mb-3 rounded-md border border-accent/30 bg-accent-dim/40 p-3">
+          <div className="font-ui text-[13px] font-semibold text-t1">
+            {t('aipass_title')}
+          </div>
+          <div className="mt-1 font-ui text-[11px] leading-relaxed text-t3">
+            {t('aipass_wallet_desc')}
+          </div>
+          <button
+            type="button"
+            disabled={aiPassBusy || (!aiPassStatus?.available && !aiPassStatus?.connected)}
+            onClick={onAiPassAction}
+            className="mt-2 w-full rounded-md border border-accent/40 bg-accent-dim px-2.5 py-1.5 font-ui text-[12px] font-medium text-accent-t transition-colors hover:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {aiPassBusy
+              ? t('aipass_connecting')
+              : aiPassStatus?.connected && aiPassStatus.profileId
+                ? t('aipass_connected')
+                : t('aipass_connect')}
+          </button>
+          {aiPassStatus?.prerequisite && !aiPassStatus.connected && (
+            <div className="mt-2 font-ui text-[10px] leading-relaxed text-t4">
+              {aiPassStatus.prerequisite}
+            </div>
+          )}
+          {aiPassError && (
+            <div className="mt-2 font-ui text-[10px] leading-relaxed text-danger">
+              {aiPassError}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="mx-3 mb-3 flex items-center gap-2 rounded-md border border-border bg-s2 px-2.5 py-1.5">
         <Icons.Search />

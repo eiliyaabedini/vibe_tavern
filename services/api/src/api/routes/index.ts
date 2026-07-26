@@ -17,6 +17,7 @@ import { createRuntimeRoutes } from "./runtime.js";
 import { createFsRoutes } from "./fs.js";
 import { createCoauthorSkillRoutes } from "./coauthor-skill.js";
 import { createDiceRoutes } from "./dice.js";
+import { createAiPassRoutes } from "./aipass.js";
 
 export type { RuntimeApi } from "../contract/runtime-api.js";
 
@@ -29,6 +30,7 @@ export function createApiRouter(runtime: RuntimeApi) {
     .route("/", createLorebookRoutes(runtime.lorebook))
     .route("/", createScriptRoutes(runtime.script))
     .route("/", createProviderRoutes(runtime.provider))
+    .route("/", createAiPassRoutes(runtime.aipass))
     .route("/", createPresetRoutes(runtime.preset))
     .route("/", createImportRoutes(runtime.importExport))
     .route("/", createAssetRoutes(runtime.asset))

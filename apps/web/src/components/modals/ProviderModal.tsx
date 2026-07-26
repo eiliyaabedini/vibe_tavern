@@ -25,6 +25,12 @@ import { useModalStore } from "../../stores/modal-store.js";
 import { useBootstrapStore } from "../../stores/api-actions/bootstrap-actions.js";
 import { getProviderModelSettingsAction, reorderProviderProfilesAction } from "../../stores/api-actions/provider-actions.js";
 import { MasterDetailModal } from "../shared/MasterDetailModal.js";
+import {
+  disconnectAiPass,
+  getAiPassStatus,
+  startAiPassAuthorization,
+  type AiPassStatusResponse,
+} from "../../api/aipass-api.js";
 
 export interface FormState {
   id: string;
@@ -156,7 +162,7 @@ interface Capabilities {
 
 function getCapabilities(type: string, providerPreset: string, model: string, endpoint: string): Capabilities {
   switch (type) {
-    case PROVIDER_TYPE.anthropic: case PROVIDER_TYPE.google:
+    case PROVIDER_TYPE.anthropic: case PROVIDER_TYPE.google: case PROVIDER_TYPE.aiPass:
       return { nonStreamGeneration: true, abortSignal: true, streaming: true, prefill: false, logitBias: false, samplers: resolveSamplerCapabilities(providerPreset, type) };
     case PROVIDER_TYPE.ollama: case PROVIDER_TYPE.llamaCpp: case PROVIDER_TYPE.unsloth:
       return { nonStreamGeneration: true, abortSignal: true, streaming: true, prefill: true, logitBias: resolveLogitBiasSupport(providerPreset, model, endpoint).supported, samplers: resolveSamplerCapabilities(providerPreset, type) };
@@ -196,9 +202,13 @@ export function ProviderModal({
   const [visionModelListOpen, setVisionModelListOpen] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmAiPassDisconnect, setConfirmAiPassDisconnect] = useState(false);
   const [profileSearch, setProfileSearch] = useState("");
   const [dirty, setDirty] = useState(false);
   const [headerSaving, setHeaderSaving] = useState(false);
+  const [aiPassStatus, setAiPassStatus] = useState<AiPassStatusResponse | null>(null);
+  const [aiPassBusy, setAiPassBusy] = useState(false);
+  const [aiPassError, setAiPassError] = useState<string | null>(null);
   const isMobile = useIsMobile();
 
   // ── Header mode: edit vs view ──
@@ -241,6 +251,41 @@ export function ProviderModal({
     }
     setTestOk(null); setHeaderMode("view"); setIsNew(false); setDirty(false); setConfirmClose(false); setConfirmDelete(false);
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let active = true;
+    void getAiPassStatus()
+      .then((status) => {
+        if (active) setAiPassStatus(status);
+      })
+      .catch(() => {
+        if (active) setAiPassError(t("aipass_status_failed"));
+      });
+    return () => {
+      active = false;
+    };
+  }, [isOpen, t]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onMessage = (event: MessageEvent<unknown>) => {
+      if (event.origin !== window.location.origin || !event.data || typeof event.data !== "object") return;
+      const data = event.data as { type?: unknown; ok?: unknown };
+      if (data.type !== "vibe-tavern:aipass-oauth") return;
+      setAiPassBusy(false);
+      if (data.ok !== true) {
+        setAiPassError(t("aipass_start_failed"));
+        return;
+      }
+      setAiPassError(null);
+      void Promise.all([getAiPassStatus(), onRefreshProfiles()])
+        .then(([status]) => setAiPassStatus(status))
+        .catch(() => setAiPassError(t("aipass_status_failed")));
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [isOpen, onRefreshProfiles, t]);
 
   useEffect(() => {
     latestFormRef.current = form;
@@ -415,6 +460,53 @@ export function ProviderModal({
     await onActivateProfile(editingId);
   };
 
+  const handleAiPassAction = async () => {
+    if (aiPassStatus?.connected && aiPassStatus.profileId) {
+      handleSelect(aiPassStatus.profileId);
+      return;
+    }
+    const popup = window.open(
+      "",
+      "vibe-tavern-aipass",
+      "popup=yes,width=520,height=720",
+    );
+    if (!popup) {
+      setAiPassError(t("aipass_popup_blocked"));
+      return;
+    }
+    setAiPassBusy(true);
+    setAiPassError(null);
+    try {
+      popup.location.replace(await startAiPassAuthorization());
+      setAiPassBusy(false);
+    } catch {
+      popup.close();
+      setAiPassBusy(false);
+      setAiPassError(t("aipass_start_failed"));
+    }
+  };
+
+  const handleAiPassDisconnect = async () => {
+    setAiPassBusy(true);
+    setAiPassError(null);
+    try {
+      const result = await disconnectAiPass();
+      await onRefreshProfiles();
+      const status = await getAiPassStatus();
+      setAiPassStatus(status);
+      setEditingId(null);
+      setForm(null);
+      if (!result.revoked) {
+        setAiPassError(t("aipass_revoke_unconfirmed"));
+      }
+    } catch {
+      setAiPassError(t("aipass_disconnect_failed"));
+    } finally {
+      setAiPassBusy(false);
+      setConfirmAiPassDisconnect(false);
+    }
+  };
+
   // ── Close ──
   const handleClose = () => {
     flushLazyAutoSave();
@@ -574,6 +666,7 @@ export function ProviderModal({
 
   // ── Derived ──
   const isActive = activeProviderProfileId === editingId;
+  const isAiPassProfile = form?.providerPreset === "aipass";
   const showConfig = headerMode === "view" && !isNew;
   const selectedPreset = form ? PROVIDER_PRESETS.find((f) => f.id === form.providerPreset) : undefined;
   const providerType = selectedPreset?.type ?? "openai_compat";
@@ -610,6 +703,15 @@ export function ProviderModal({
           onCancel={() => setConfirmDelete(false)}
         />
       )}
+      {confirmAiPassDisconnect && (
+        <DestructiveConfirmModal
+          title={t("aipass_disconnect_title")}
+          body={t("aipass_disconnect_body")}
+          confirmLabel={t("aipass_disconnect")}
+          onConfirm={() => void handleAiPassDisconnect()}
+          onCancel={() => setConfirmAiPassDisconnect(false)}
+        />
+      )}
 
       <MasterDetailModal
         isOpen={true}
@@ -631,6 +733,10 @@ export function ProviderModal({
             onProfileSearchChange={setProfileSearch}
             onSelectProfile={(id) => { handleSelect(id); }}
             onAddProfile={() => { void handleAdd(); }}
+            aiPassStatus={aiPassStatus}
+            aiPassBusy={aiPassBusy}
+            aiPassError={aiPassError}
+            onAiPassAction={() => void handleAiPassAction()}
           />
         )}
         detailContent={
@@ -641,7 +747,7 @@ export function ProviderModal({
           ) : (
             <>
               {/* ── EDIT HEADER MODE ── */}
-              {headerMode === "edit" && (
+              {headerMode === "edit" && !isAiPassProfile && (
                 <ProviderEditHeader
                   form={form} editingId={editingId} providerProfiles={providerProfiles}
                   updateForm={updateForm} applyPreset={applyPreset}
@@ -656,12 +762,49 @@ export function ProviderModal({
               )}
 
               {/* ── VIEW HEADER MODE ── */}
-              {headerMode === "view" && !isNew && (
+              {headerMode === "view" && !isNew && !isAiPassProfile && (
                 <ProviderViewHeader
                   form={form} isActive={isActive}
                   onEdit={() => setHeaderMode("edit")}
                   onActivate={() => void handleActivate()}
                 />
+              )}
+
+              {isAiPassProfile && (
+                <div className="mb-5 rounded-lg border border-accent/30 bg-accent-dim/30 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="font-ui text-[15px] font-semibold text-t1">
+                        {t("aipass_account_connection")}
+                      </div>
+                      <div className="mt-1 max-w-[520px] font-ui text-[12px] leading-relaxed text-t3">
+                        {t("aipass_wallet_desc")}
+                      </div>
+                      <div className="mt-2 font-ui text-[12px] text-success">
+                        {t("aipass_connected")}
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      {!isActive && (
+                        <button
+                          type="button"
+                          onClick={() => void handleActivate()}
+                          className="rounded-md border border-border bg-s2 px-3 py-1.5 font-ui text-[12px] font-medium text-t2 transition-colors hover:border-border2 hover:text-t1"
+                        >
+                          {t("make_active")}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setConfirmAiPassDisconnect(true)}
+                        disabled={aiPassBusy}
+                        className="rounded-md border border-danger/30 bg-danger/10 px-3 py-1.5 font-ui text-[12px] font-medium text-danger transition-colors hover:border-danger/60 disabled:opacity-50"
+                      >
+                        {t("aipass_disconnect")}
+                      </button>
+                    </div>
+                  </div>
+                </div>
               )}
 
               {/* ── CONFIG SECTION (only after header saved) ── */}
@@ -742,6 +885,8 @@ export function ProviderModal({
         footer={
           <div className={cn("shrink-0 items-center justify-between border-t border-border", isMobile ? "flex flex-wrap gap-2 px-4 py-3" : "flex px-6 py-4")}>
             <div className="flex flex-wrap gap-x-4 gap-y-2">
+              {!isAiPassProfile && (
+                <>
               <span className="flex cursor-pointer items-center gap-1.5 font-ui text-[13px] text-t3 transition-colors hover:text-t1" onClick={() => void handleDuplicate()}>
                 <Icons.Copy /> {t("duplicate")}
               </span>
@@ -749,6 +894,8 @@ export function ProviderModal({
                 <span className="flex cursor-pointer items-center gap-1.5 font-ui text-[13px] text-danger/80 transition-colors hover:text-danger" onClick={handleDelete}>
                   <Icons.Trash /> {t("delete")}
                 </span>
+              )}
+                </>
               )}
             </div>
             <div className="flex min-w-0 items-center gap-2 font-ui text-[12px] text-t3 transition-opacity duration-300" style={{ opacity: autoSaveFlash ? 1 : 0 }}>

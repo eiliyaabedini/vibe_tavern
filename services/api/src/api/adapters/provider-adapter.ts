@@ -10,6 +10,21 @@ import {
 	listProviderModels,
 	normalizeOpenAiCompatibleBaseUrl,
 } from "../../domain/providers/provider-gateway.js";
+import { providerError } from "../../shared/errors.js";
+import { isAiPassEndpoint } from "../../domain/aipass/aipass-transport.js";
+
+const AI_PASS_PRESET = "aipass";
+
+function rejectAiPassGenericPath(
+	providerType: unknown,
+	endpoint?: unknown,
+): void {
+	if (providerType === AI_PASS_PRESET || isAiPassEndpoint(endpoint)) {
+		throw providerError(
+			"Use Connect AI Pass to manage this account connection.",
+		);
+	}
+}
 
 export class ProviderAdapter implements ProviderRuntimeApi {
 	constructor(
@@ -31,13 +46,36 @@ export class ProviderAdapter implements ProviderRuntimeApi {
 	activateProviderProfile = (providerProfileId: string) =>
 		this.providerProfileService.activateProviderProfile(providerProfileId);
 
-	updateProviderProfile = (providerProfileId: string, body: Record<string, unknown>) =>
-		this.providerProfileService.updateProviderProfile(providerProfileId, body);
+	updateProviderProfile = async (providerProfileId: string, body: Record<string, unknown>) => {
+		rejectAiPassGenericPath(
+			body.providerPreset,
+			body.endpoint,
+		);
+		const profile = await this.getRequiredClientProviderProfile(
+			providerProfileId,
+		);
+		if (profile.providerPreset === AI_PASS_PRESET) {
+			for (const field of ["apiKey", "endpoint", "providerPreset", "name"]) {
+				if (Object.prototype.hasOwnProperty.call(body, field)) {
+					throw providerError(
+						"Use Connect AI Pass to manage account connection fields.",
+					);
+				}
+			}
+		}
+		return this.providerProfileService.updateProviderProfile(
+			providerProfileId,
+			body,
+		);
+	};
 
-	saveProviderDraft = (body: Record<string, unknown>) =>
-		this.providerProfileService.saveProviderProfile(body);
+	saveProviderDraft = async (body: Record<string, unknown>) => {
+		rejectAiPassGenericPath(body.providerPreset, body.endpoint);
+		return this.providerProfileService.saveProviderProfile(body);
+	};
 
-	testProviderDraft = (body: { endpoint?: string; apiKey?: string; providerType?: string } | null) => {
+	testProviderDraft = async (body: { endpoint?: string; apiKey?: string; providerType?: string } | null) => {
+		rejectAiPassGenericPath(body?.providerType, body?.endpoint);
 		const endpoint = (body?.endpoint ?? "").trim();
 		const apiKey = (body?.apiKey ?? "").trim();
 		return probeProviderConnection({ baseUrl: endpoint, apiKey, providerType: body?.providerType });
@@ -52,8 +90,17 @@ export class ProviderAdapter implements ProviderRuntimeApi {
 		});
 	};
 
-	deleteProviderProfile = (providerProfileId: string) =>
-		this.providerProfileService.deleteProviderProfile(providerProfileId);
+	deleteProviderProfile = async (providerProfileId: string) => {
+		const profile = await this.getRequiredClientProviderProfile(
+			providerProfileId,
+		);
+		if (profile.providerPreset === AI_PASS_PRESET) {
+			throw providerError(
+				"Use Disconnect AI Pass to revoke and remove this connection.",
+			);
+		}
+		return this.providerProfileService.deleteProviderProfile(providerProfileId);
+	};
 
 	fetchProviderModels = async (providerProfileId: string) => {
 		const profile = await this.getRequiredProviderProfile(providerProfileId);
@@ -103,6 +150,7 @@ export class ProviderAdapter implements ProviderRuntimeApi {
 		this.providerProfileService.deleteProviderModelSettings(providerProfileId, modelId);
 
 	fetchModelsByEndpoint = async (baseUrl: string, apiKey?: string, providerType?: string) => {
+		rejectAiPassGenericPath(providerType, baseUrl);
 		const normalized = normalizeOpenAiCompatibleBaseUrl(baseUrl);
 		const requiresAuth = providerType === "anthropic" || providerType === "google" || providerType === "unsloth";
 		return listProviderModels({
@@ -113,12 +161,15 @@ export class ProviderAdapter implements ProviderRuntimeApi {
 		});
 	};
 
-	testProviderChatByEndpoint = (opts: {
+	testProviderChatByEndpoint = async (opts: {
 		baseUrl: string;
 		apiKey: string;
 		model: string;
 		providerType?: string;
-	}) => testProviderChat(opts);
+	}) => {
+		rejectAiPassGenericPath(opts.providerType, opts.baseUrl);
+		return testProviderChat(opts);
+	};
 
 	testProviderChatByProfile = async (providerProfileId: string, model: string) => {
 		const profile = await this.getRequiredProviderProfile(providerProfileId);
@@ -134,6 +185,20 @@ export class ProviderAdapter implements ProviderRuntimeApi {
 		const profile = await this.providerProfileService.getProviderProfile(providerProfileId);
 		if (!profile) {
 			throw notFound("ProviderProfile", `Provider profile '${providerProfileId}' was not found.`);
+		}
+		return profile;
+	}
+
+	private async getRequiredClientProviderProfile(providerProfileId: string) {
+		const profile =
+			await this.providerProfileService.getProviderProfileForClient(
+				providerProfileId,
+			);
+		if (!profile) {
+			throw notFound(
+				"ProviderProfile",
+				`Provider profile '${providerProfileId}' was not found.`,
+			);
 		}
 		return profile;
 	}

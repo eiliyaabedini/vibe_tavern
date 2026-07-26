@@ -52,6 +52,10 @@ import type { ScriptTestResult } from "../../domain/scripts-engine/script-test-s
 import type { StDirectoryScanResult, StDirectoryImportResult, ImportStreamEvent } from "../../shared/st-directory-scanner.js";
 import type { MobileAccessInfo } from "../../domain/mobile-access/mobile-access-service.js";
 import type { SkillImportFile, SkillImportResult } from "../../domain/coauthor/skills/skill-library.js";
+import type {
+	AiPassCallbackInput,
+	AiPassStatus,
+} from "../../domain/aipass/aipass-service.js";
 
 // ─── Shared type aliases ────────────────────────────────────────────
 //
@@ -362,6 +366,19 @@ export interface ProviderRuntimeApi {
 	testProviderChatByProfile: (providerProfileId: string, model: string) => Promise<TestChatResult>;
 }
 
+// ─── AI Pass account connection ─────────────────────────────────────
+
+export interface AiPassRuntimeApi {
+	readonly appOrigin: string | null;
+	getStatus: () => Promise<AiPassStatus>;
+	createAuthorizationLaunch: () => Promise<{ launchPath: string }>;
+	beginAuthorization: (
+		launchId: string,
+	) => Promise<{ authorizationUrl: string; transactionId: string }>;
+	completeAuthorization: (input: AiPassCallbackInput) => Promise<void>;
+	disconnect: () => Promise<{ revoked: boolean }>;
+}
+
 // ─── Preset ──────────────────────────────────────────────────────────
 
 export interface PresetRuntimeApi {
@@ -507,6 +524,7 @@ export interface RuntimeApi {
 	lorebook: LorebookRuntimeApi;
 	script: ScriptRuntimeApi;
 	provider: ProviderRuntimeApi;
+	aipass: AiPassRuntimeApi;
 	preset: PresetRuntimeApi;
 	importExport: ImportExportRuntimeApi;
 	asset: AssetRuntimeApi;

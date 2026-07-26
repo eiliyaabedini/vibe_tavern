@@ -12,6 +12,7 @@ const PRESET_TO_PROVIDER_TYPE: Record<string, ProviderType> = {
   [PROVIDER_TYPE.llamaCpp]: PROVIDER_TYPE.llamaCpp,
   [PROVIDER_TYPE.koboldCpp]: PROVIDER_TYPE.koboldCpp,
   [PROVIDER_TYPE.unsloth]: PROVIDER_TYPE.unsloth,
+  [PROVIDER_TYPE.aiPass]: PROVIDER_TYPE.aiPass,
 
   openai: PROVIDER_TYPE.openaiCompat,
   openrouter: PROVIDER_TYPE.openaiCompat,
@@ -84,6 +85,7 @@ const DIRECT_DISABLED_PRESETS = new Set([
   "ai21",
   "mimo",
   "koboldcpp",
+  "aipass",
 ]);
 
 function inferPresetFromEndpoint(endpoint?: string | null): string | null {

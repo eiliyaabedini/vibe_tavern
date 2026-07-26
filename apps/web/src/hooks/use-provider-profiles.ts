@@ -4,7 +4,7 @@ import type { ProviderProbeResponse } from "@vibe-tavern/domain";
 import { MODEL_FAVORITE_SCOPE, PROVIDER_TYPE, tag } from "@vibe-tavern/domain";
 import { getT } from "../i18n/locale-helpers.js";
 import { computeHydration } from "./hydrate-provider.js";
-import { computeSavePatch, computeOverlayPatch, connectionToSavePatch, validateSavePatch, buildFavoriteModelSwitchPatch } from "./save-provider-patch.js";
+import { computeAiPassSavePatch, computeSavePatch, computeOverlayPatch, connectionToSavePatch, validateSavePatch, buildFavoriteModelSwitchPatch } from "./save-provider-patch.js";
 import { useProviderStore } from "../stores/provider-store.js";
 import { useProviderDataStore } from "../stores/provider-data-store.js";
 import {
@@ -491,6 +491,7 @@ export function useProviderProfiles() {
     //    to today's behavior (identity + sampler + bindPerModel all on base).
     //  - bindPerModel toggle is an identity-level field → always on the base.
     const isInOverlayMode = form.bindPerModel && form.editingModelId != null;
+    const isAiPass = form.providerPreset === PROVIDER_TYPE.aiPass;
 
     try {
       let saved: ProviderProfileRecord | null;
@@ -498,15 +499,21 @@ export function useProviderProfiles() {
         // Identity-only base write (partial PATCH — updateProviderProfileSchema
         // is providerCoreSchema.partial(), so omitted sampler fields are not
         // touched on the base).
-        const identityPatch = {
-          name: basePatch.name,
-          providerPreset: basePatch.providerPreset,
-          endpoint: basePatch.endpoint,
-          apiKey: basePatch.apiKey,
-          defaultModel: basePatch.defaultModel,
-          visionModel: basePatch.visionModel,
-          bindPerModel: basePatch.bindPerModel,
-        };
+        const identityPatch = isAiPass
+          ? {
+              defaultModel: basePatch.defaultModel,
+              visionModel: basePatch.visionModel,
+              bindPerModel: basePatch.bindPerModel,
+            }
+          : {
+              name: basePatch.name,
+              providerPreset: basePatch.providerPreset,
+              endpoint: basePatch.endpoint,
+              apiKey: basePatch.apiKey,
+              defaultModel: basePatch.defaultModel,
+              visionModel: basePatch.visionModel,
+              bindPerModel: basePatch.bindPerModel,
+            };
         saved = form.id
           ? await updateProviderProfileAction(form.id, identityPatch)
           : await saveProviderProfileAction(basePatch);
@@ -522,7 +529,10 @@ export function useProviderProfiles() {
         }
       } else {
         saved = form.id
-          ? await updateProviderProfileAction(form.id, basePatch)
+          ? await updateProviderProfileAction(
+              form.id,
+              isAiPass ? computeAiPassSavePatch(form) : basePatch,
+            )
           : await saveProviderProfileAction(basePatch);
       }
       tag("handleSave").debug('saved result:', { id: saved?.id, defaultModel: saved?.defaultModel, visionModel: saved?.visionModel, overlayMode: isInOverlayMode });
